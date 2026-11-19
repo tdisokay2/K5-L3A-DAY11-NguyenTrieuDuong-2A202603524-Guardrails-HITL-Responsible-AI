@@ -1,5 +1,31 @@
 # Day 11 — Controlled Agent Security (2026)
 
+- Họ tên: Nguyễn Triệu Dương
+- MSSV: 2A202603524
+
+## Cách chạy ngắn (PowerShell)
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+if (!(Test-Path .env)) { Copy-Item .env.example .env }
+```
+
+Điền API key trong `.env`: `OPENROUTER_API_KEY` cho Blue;
+`GOOGLE_API_KEY`, `RED_TEAM_PROVIDER=gemini` và `GEMINI_MODEL=gemini-3.5-flash`
+cho Red / Red Advance. Không commit `.env`.
+
+```powershell
+python src/main.py --part 2
+python src/main.py --part 3
+python src/main.py --part 4
+python -m pytest tests/smoke tests/public -q
+python scripts/grade.py --submission-dir . --out outputs/grade_report.json
+```
+
+Chạy từ thư mục gốc repo. Kết quả được lưu trong `outputs/`.
+
 > 👤 **Hình thức:** bài tập **cá nhân** (1 người / 1 MSSV).  
 > 🎯 **Mục tiêu:** đóng vai **Blue Team** để học cách xây Guardrails phòng thủ, rồi đóng vai **Red Team** để tấn công agent **Red** hoặc **Red Advance**.  
 > ✅ Làm theo **Checkpoint 1 → 5** trong [`CHECKPOINTS.md`](CHECKPOINTS.md) · nộp theo [`SUBMISSION.md`](SUBMISSION.md).

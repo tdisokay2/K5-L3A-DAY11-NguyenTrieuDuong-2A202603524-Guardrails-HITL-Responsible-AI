@@ -134,10 +134,13 @@ async def part4_attacks():
 
 
 async def main(parts=None):
-    setup_api_key()
-
     if parts is None:
         parts = [2, 3, 4]  # Core: CP2 → CP3 → CP4
+
+    # CP2 is deterministic and needs no credentials. Only request the keys
+    # used by the selected checkpoint.
+    if 3 in parts or 4 in parts:
+        setup_api_key(blue=3 in parts, red=4 in parts)
 
     for part in parts:
         if part == 2:

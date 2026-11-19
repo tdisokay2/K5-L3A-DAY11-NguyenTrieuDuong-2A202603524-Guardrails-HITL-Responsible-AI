@@ -8,6 +8,11 @@ Gemini Red Team dùng Google ADK trong agents/*.py — không đi qua file này.
 """
 from __future__ import annotations
 
+import asyncio
+import math
+import random
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -49,7 +54,64 @@ class OpenAIRunner:
     def _client(self):
         from openai import OpenAI
 
-        return OpenAI(**(self.client_kwargs or {}))
+        # Own the retry budget here so SDK retries do not multiply our attempts.
+        return OpenAI(**{"max_retries": 0, **(self.client_kwargs or {})})
+
+    async def _completion_with_backoff(self, client, **kwargs):
+        """Retry temporary provider throttling, preserving the assigned model."""
+        from openai import RateLimitError
+
+        for attempt in range(4):
+            try:
+                return client.chat.completions.create(**kwargs)
+            except RateLimitError as error:
+                # A 429 can describe exhausted credit/spend quota, which waiting
+                # cannot fix. Inspect structured codes without dumping API bodies.
+                details = error.body if isinstance(error.body, dict) else {}
+                details = details.get("error", details)
+                if not isinstance(details, dict):
+                    details = {}
+                codes = (getattr(error, "code", None), getattr(error, "type", None),
+                         details.get("code"), details.get("type"))
+                quota_codes = {
+                    "insufficient_quota", "credit_balance_exhausted",
+                    "organization_spend_limit_exceeded", "organization_usage_limit_exceeded",
+                    "billing_hard_limit_reached",
+                }
+                quota_code = next((code for code in codes if isinstance(code, str)
+                                   and code in quota_codes), None)
+                account = "OpenAI" if self.provider == "openai" else self.provider
+                if quota_code:
+                    raise RuntimeError(
+                        f"{account} API quota/billing limit reached ({quota_code}). "
+                        f"Check the {account} account's API billing, credits, and usage limits "
+                        "for this key/project before rerunning. Retrying will not restore quota."
+                    ) from None
+                delay = 5 * 2 ** attempt + random.uniform(0, 1)
+                hint = error.response.headers.get("retry-after")
+                if hint:
+                    try:
+                        delay = float(hint)
+                    except ValueError:
+                        try:
+                            deadline = parsedate_to_datetime(hint)
+                            if deadline.tzinfo is None:
+                                deadline = deadline.replace(tzinfo=timezone.utc)
+                            delay = (deadline - datetime.now(timezone.utc)).total_seconds()
+                        except (TypeError, ValueError, OverflowError):
+                            pass
+                if not math.isfinite(delay) or delay < 0:
+                    delay = 5 * 2 ** attempt
+                if attempt == 3 or delay > 60:
+                    raise RuntimeError(
+                        f"{self.provider} returned HTTP 429 for {self.model}. "
+                        "The provider is still rate limited. "
+                        f"Check your {account} API rate limits and billing/usage quota, "
+                        "then retry after any temporary limit has cleared. "
+                        "This is separate from the lab's local rate limiter."
+                    ) from None
+                print(f"Provider HTTP 429; retry {attempt + 1}/3 in {delay:.1f}s...", flush=True)
+                await asyncio.sleep(delay)
 
     async def chat(self, agent: OpenAIAgent, user_message: str) -> str:
         for hook in self.input_hooks:
@@ -62,7 +124,7 @@ class OpenAIRunner:
             return block_msg
 
         client = self._client()
-        completion = client.chat.completions.create(
+        completion = await self._completion_with_backoff(client,
             model=self.model,
             messages=[
                 {"role": "system", "content": agent.instruction},
